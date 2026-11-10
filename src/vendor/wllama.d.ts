@@ -1,4 +1,4 @@
-// Public subset used by LocalAI; implementation is prepared from pinned upstream.
+// Public subset used by Locaya; implementation is prepared from pinned upstream.
 declare module '*vendor/generated/wllama.js' {
   export class Wllama {
     constructor(paths: { default: string }, config?: { logger?: Record<string, (...args: unknown[]) => void>; allowOffline?: boolean })

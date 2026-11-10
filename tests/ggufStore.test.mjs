@@ -29,8 +29,11 @@ test('GGUF cache commits only a complete file, reuses it offline, and accepts a 
   globalThis.fetch = async () => { fetches++; return new Response(body) }
   const compiled = await build({ entryPoints: ['src/utils/ggufStore.ts'], bundle: true, platform: 'browser', format: 'esm', write: false,
     plugins: [{ name: 'tiny-file-fixture', setup(builder) {
+      builder.onResolve({ filter: /llm-protocol$/ }, () => ({ path: 'protocol', namespace: 'fixture' }))
       builder.onResolve({ filter: /wllamaSettings$/ }, () => ({ path: 'settings', namespace: 'fixture' }))
-      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const GGUF_BYTES=8;export const GGUF_FILE='fixture.gguf';export const GGUF_URL='https://example.test/fixture.gguf';` }))
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({path}) => ({ contents: path === 'protocol'
+        ? `export const DEFAULT_MODEL_ID='default';export const LFM_MODELS=[{id:'default',ggufFile:'fixture.gguf',ggufBytes:8,ggufUrl:'https://example.test/fixture.gguf'},{id:'qwen3-text-0.6b-q8',ggufFile:'qwen.gguf',ggufBytes:8,ggufUrl:'https://example.test/qwen.gguf'}];export const getModelSpec=id=>LFM_MODELS.find(m=>m.id===id)||LFM_MODELS[0];`
+        : `export const GGUF_FILE='fixture.gguf';` }))
     } }],
   })
   try {
@@ -52,6 +55,10 @@ test('GGUF cache commits only a complete file, reuses it offline, and accepts a 
     await saveGguf(new File(['GGUF1234'], 'local.gguf'), () => {})
     assert.equal(fetches, before)
     assert.equal(await (await cachedGguf()).text(), 'GGUF1234')
+    body = 'GGUF1234'
+    await saveGguf(undefined, () => {}, 'qwen3-text-0.6b-q8')
+    assert.equal((await cachedGguf('qwen3-text-0.6b-q8')).size, 8)
+    assert.equal((await cachedGguf()).size, 8)
     await saveGguf(new File(['GGUF-custom'], 'other.gguf'), () => {}, 'custom-one')
     await saveGguf(new File(['GGUF-other'], 'third.gguf'), () => {}, 'custom-two')
     assert.equal(await (await cachedGguf('custom-one')).text(), 'GGUF-custom')
@@ -63,7 +70,9 @@ test('GGUF cache commits only a complete file, reuses it offline, and accepts a 
     await deleteGguf('custom-one')
     assert.equal(await cachedGguf('custom-one'), null)
     assert.equal(await (await cachedGguf('custom-two')).text(), 'GGUF-other')
-    assert.equal(fetches, before)
+    await deleteGguf('qwen3-text-0.6b-q8')
+    assert.equal(await cachedGguf('qwen3-text-0.6b-q8'), null)
+    assert.equal(fetches, before + 1)
     await deleteGguf()
     assert.equal(await cachedGguf(), null)
   } finally {

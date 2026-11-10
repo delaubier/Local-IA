@@ -4,12 +4,13 @@ import { tr } from '../utils/i18n'
 export function DictationVisualizer({ recorder }: { recorder: LocalMicRecorder }) {
   const bars = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const clock = { frame: 0, last: 0 }
+    const clock = { frame: 0, last: 0, level: 0 }
     const history = Array<number>(64).fill(0)
     const update = (now: number) => {
-      if (now - clock.last > 65) {
-        history.shift(); history.push(recorder.waveformLevel())
-        bars.current?.querySelectorAll<HTMLElement>('i').forEach((bar, i) => { bar.style.height = `${2 + history[i] * 32}px` })
+      if (now - clock.last > 120) {
+        clock.level += (recorder.waveformLevel() - clock.level) * .24
+        history.shift(); history.push(clock.level)
+        bars.current?.querySelectorAll<HTMLElement>('i').forEach((bar, i) => { bar.style.height = `${2 + history[i] * 26}px` })
         clock.last = now
       }
       clock.frame = requestAnimationFrame(update)

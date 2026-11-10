@@ -12,6 +12,13 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   presencePenalty: 0, frequencyPenalty: 0, seed: -1, reasoningBudget: 1024, stopSequences: '',
   threads: 4, batchSize: 256, microBatchSize: 128, flashAttention: true,
 }
+export function settingsForModel(modelId: string, input?: Partial<ModelSettings>): ModelSettings {
+  const qwen = modelId.startsWith('qwen3-') || modelId.startsWith('qwen35-')
+  return normalizeModelSettings({
+    ...(qwen ? { temperature: .7, topK: 20, topP: .8, repeatPenalty: 1, presencePenalty: 1.5 } : {}),
+    ...input,
+  })
+}
 export function normalizeModelSettings(input: Partial<ModelSettings> = {}): ModelSettings {
   const value = { ...DEFAULT_MODEL_SETTINGS, ...input }
   const number = (key: keyof ModelSettings, min: number, max: number, integer = false) => {

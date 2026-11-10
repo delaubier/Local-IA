@@ -17,6 +17,7 @@ import {
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
 import ortMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
 import { ModelLoadProgress } from './utils/modelLoadProgress'
+import { omitWindowsWebGPUPowerPreference } from './utils/webgpuAdapter'
 import { promptStartsThinking, hasUsableAnswer } from './utils/thinkingBudget'
 import { createReasoningProcessor } from './utils/reasoningProcessor'
 import { isCurrentInterrupt } from './utils/generationRun'
@@ -48,18 +49,7 @@ onnxEnv.wasm.wasmPaths = {
 onnxEnv.wasm.numThreads = 1
 if (onnxEnv.webgpu) delete onnxEnv.webgpu.powerPreference
 
-// Sur Windows (Chromium crbug.com/369219127), ONNX Runtime passe parfois `powerPreference`
-// à `navigator.gpu.requestAdapter(options)`, ce qui déclenche un avertissement console dans `chrome://extensions`.
-if (typeof navigator !== 'undefined' && (navigator as any).gpu?.requestAdapter) {
-  const origRequestAdapter = (navigator as any).gpu.requestAdapter.bind((navigator as any).gpu)
-  ;(navigator as any).gpu.requestAdapter = (options?: any) => {
-    if (options && typeof options === 'object' && 'powerPreference' in options) {
-      const { powerPreference: _ignored, ...rest } = options
-      return origRequestAdapter(rest)
-    }
-    return origRequestAdapter(options)
-  }
-}
+omitWindowsWebGPUPowerPreference()
 
 let activeRequestId: number | null = null
 let activeAllowsTools = false

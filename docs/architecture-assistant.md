@@ -38,7 +38,7 @@ Validation complémentaire : 59 tests déterministes passent et le bundle de pro
 - https://lmstudio.ai/danielsig/duckduckgo
 - https://lmstudio.ai/danielsig/visit-website
 
-Ils dépendent de `@lmstudio/sdk` et du runtime LM Studio. Ce ne sont pas des modules prêts à installer dans Chrome. Leur code est sous licence MIT, mais aucun code de ces plugins n'a été recopié ici. DuckDuckGo utilise une interface HTML, comme notre recherche actuelle ; remplacer notre accès par le plugin ne constitue pas une amélioration démontrée de fiabilité. Leur extraction des liens suggère en revanche une capacité utile à compléter dans LocalAI.
+Ils dépendent de `@lmstudio/sdk` et du runtime LM Studio. Ce ne sont pas des modules prêts à installer dans Chrome. Leur code est sous licence MIT, mais aucun code de ces plugins n'a été recopié ici. DuckDuckGo utilise une interface HTML, comme notre recherche actuelle ; remplacer notre accès par le plugin ne constitue pas une amélioration démontrée de fiabilité. Leur extraction des liens suggère en revanche une capacité utile à compléter dans Locaya.
 
 Implémentation autonome retenue : recherche, lecture avec Readability, contrôle de pertinence après lecture, puis au plus deux liens observés et pertinents sur les mêmes sites. Un seul niveau de liens supplémentaire est autorisé, sans récursion, sans URL inventée, sans exécution de JavaScript distant. Les liens qui échouent à la lecture ne deviennent pas des preuves. Au plus quatre sources alimentent la réponse et le budget des passages reste limité. Les dates de publication, les extraits de moteur et les pages réellement lues restent distincts.
 

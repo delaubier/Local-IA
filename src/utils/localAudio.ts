@@ -1,4 +1,5 @@
 /// <reference types="chrome"/>
+import { speakNeural, stopNeuralSpeech, supportsNeuralSpeech } from './neuralSpeech'
 // Utilitaires Audio, Dictée multilingue 100 % locaux :
 // 1. Gestion automatique de la permission Microphone dans le Side Panel Chrome (popup d'autorisation auto-fermante)
 // 2. Dictée manuelle (LocalMicRecorder) -> PCM 16 kHz
@@ -165,7 +166,7 @@ async function requestMicPermissionViaExtensionPopup(): Promise<void> {
   })
 }
 
-async function acquireMicrophoneStream(): Promise<MediaStream> {
+async function acquireMicrophoneStream(deviceId?: string): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("L'accès au microphone n'est pas supporté dans ce contexte.")
   }
@@ -175,6 +176,7 @@ async function acquireMicrophoneStream(): Promise<MediaStream> {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
+      ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
     },
     video: false,
   }
@@ -233,29 +235,26 @@ export class LocalMicRecorder {
     return this.recorder?.state === 'recording'
   }
 
-  async start(): Promise<void> {
-    if (this.isRecording) return
+  async start(deviceId?: string, record = true): Promise<void> {
+    if (this.stream) return
     const session = ++this.session
-    const stream = await acquireMicrophoneStream()
+    const stream = await acquireMicrophoneStream(deviceId)
     if (session !== this.session) { stream.getTracks().forEach(track => track.stop()); throw new DOMException('Cancelled', 'AbortError') }
     this.stream = stream
     try {
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : ''
-
-      this.chunks = []
-      this.recorder = mimeType
-        ? new MediaRecorder(this.stream, { mimeType })
-        : new MediaRecorder(this.stream)
-
-      this.recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) this.chunks.push(e.data)
+      if (record) {
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : ''
+        this.chunks = []
+        this.recorder = mimeType
+          ? new MediaRecorder(this.stream, { mimeType })
+          : new MediaRecorder(this.stream)
+        this.recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this.chunks.push(e.data)
+        }
+        this.recorder.start(200)
       }
-
-      this.recorder.start(200)
     } catch (error) {
       this.cleanup()
       throw error
@@ -269,7 +268,9 @@ export class LocalMicRecorder {
       this.audioSource.connect(this.analyser)
       // No connection to the speakers: the meter never feeds the microphone back.
       await this.audioContext.resume()
-    } catch { /* Recording remains available if the meter is unsupported. */ }
+    } catch (error) {
+      if (!record) { this.cleanup(); throw error }
+    }
 
   }
 
@@ -387,7 +388,7 @@ export class TabAudioCaptureController {
         this.mode = 'stream'
         return
       } catch (tabCaptureErr: any) {
-        console.info('[LocalAI] Repli capture audio (tabCapture non invoqué):', tabCaptureErr?.message)
+        console.info('[Locaya] Repli capture audio (tabCapture non invoqué):', tabCaptureErr?.message)
       }
     }
 
@@ -445,7 +446,7 @@ export class TabAudioCaptureController {
           return
         }
       } catch (scriptErr) {
-        console.info('[LocalAI] Repli captureStream DOM échoué:', scriptErr)
+        console.info('[Locaya] Repli captureStream DOM échoué:', scriptErr)
       }
     }
 
@@ -728,8 +729,13 @@ function pickBestVoiceForLanguage(langPrefix: string): SpeechSynthesisVoice | nu
   return scored[0]?.voice ?? null
 }
 
+let speechRequest = 0
+
 export function stopSpeaking(): void {
+  speechRequest++
+  stopNeuralSpeech()
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.onvoiceschanged = null
     window.speechSynthesis.cancel()
   }
 }
@@ -738,21 +744,27 @@ export function speakMarkdownText(
   markdown: string,
   options?: { onStart?: () => void; onEnd?: () => void; onError?: (msg: string) => void },
 ): void {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    options?.onError?.("La synthèse vocale n'est pas supportée par ce navigateur.")
-    return
-  }
-
+  stopSpeaking()
   const text = cleanMarkdownForSpeech(markdown)
   if (!text) {
     options?.onEnd?.()
     return
   }
 
-  stopSpeaking()
+  const request = speechRequest
+  const lang = detectTextLanguage(text)
+  const onEnd = () => { if (request === speechRequest) options?.onEnd?.() }
+  const onError = (message: string) => { if (request === speechRequest) options?.onError?.(message) }
+  if (localStorage.getItem('localaiSpeechVoice') === 'pocket' && supportsNeuralSpeech(lang)) {
+    void speakNeural(text, lang, options?.onStart).then(onEnd, error => onError(String(error?.message ?? error)))
+    return
+  }
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    onError("La synthèse vocale n'est pas supportée par ce navigateur.")
+    return
+  }
 
   const runSpeak = () => {
-    const lang = detectTextLanguage(text)
     const voice = pickBestVoiceForLanguage(lang)
 
     const utterance = new SpeechSynthesisUtterance(text)
@@ -765,8 +777,8 @@ export function speakMarkdownText(
     utterance.rate = 1.0
     utterance.pitch = 1.0
     utterance.onstart = () => options?.onStart?.()
-    utterance.onend = () => options?.onEnd?.()
-    utterance.onerror = () => options?.onEnd?.()
+    utterance.onend = onEnd
+    utterance.onerror = onEnd
     window.speechSynthesis.speak(utterance)
   }
 

@@ -235,6 +235,8 @@ test('Greetings and translation stay local; current factual questions trigger re
   assert.equal(shouldTriggerWebSearch('Quel est le président actuel ?'), true)
   assert.equal(shouldTriggerWebSearch('Qu’est-ce qu’un volcan ?'), false)
   assert.equal(shouldTriggerWebSearch('Qu’est-ce qu’un moteur de recherche ?'), false)
+  assert.equal(shouldTriggerWebSearch('Quelle est la capitale de la France ?'), false)
+  assert.equal(shouldTriggerWebSearch('Qui a écrit Les Misérables ?'), false)
   assert.equal(shouldTriggerWebSearch('What is a good restaurant in Rennes?'), true)
 })
 

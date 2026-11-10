@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 .local/
+release/
+.env
+.env.*
+!.env.example
+*.pem
 public/wllama/
 src/vendor/generated/
 

@@ -3,8 +3,8 @@ import { canonicalWebUrl } from './webEvidence'
 import { defaultProviders, fetchWebText, type ResearchProviders, type WebSearchSource } from './webSearch'
 
 export const WEB_PROVIDERS = {
-  'local-jina': 'LocalAI + Jina Reader',
-  local: 'LocalAI uniquement',
+  'local-jina': 'Locaya + Jina Reader',
+  local: 'Locaya uniquement',
   tavily: 'Tavily Search',
   brave: 'Brave Search API',
   exa: 'Exa Search',

@@ -1,5 +1,5 @@
 import { Wllama } from './vendor/generated/wllama.js'
-import { DEFAULT_MODEL_ID, VISION_MODEL_ID, getModelSpec, type WorkerRequest, type WorkerResponse, type ChatTurn } from './llm-protocol'
+import { DEFAULT_MODEL_ID, VISION_MODEL_ID, LFM_MODELS, getModelSpec, type WorkerRequest, type WorkerResponse, type ChatTurn } from './llm-protocol'
 import { cachedGguf, saveGguf, deleteGguf } from './utils/ggufStore'
 import { WllamaStream, type WllamaChunk, type WllamaMessage } from './utils/wllamaSettings'
 import { normalizeModelSettings, nativeLoadSettings, nativeSampling, type ModelSettings } from './utils/modelSettings'
@@ -45,13 +45,13 @@ function visionWorker() {
   return vision
 }
 async function cacheStatus() {
-  const file = await cachedGguf()
+  const builtInCache = Object.fromEntries(await Promise.all(LFM_MODELS.filter(model => model.ggufFile).map(async model => [model.id, !!await cachedGguf(model.id)])))
   const customCache = Object.fromEntries(await Promise.all(knownModelIds.filter(id => id.startsWith('custom-')).map(async id => [id, !!await cachedGguf(id)])))
   await new Promise<void>(resolve => {
     visionChecks.push(resolve)
     visionWorker().postMessage({ type: 'check' } satisfies WorkerRequest)
   })
-  post({ type: 'cache-status', cachedMap: { [DEFAULT_MODEL_ID]: !!file, [VISION_MODEL_ID]: visionCached, ...customCache }, loadedModelId, webgpu: hasWebGPU() })
+  post({ type: 'cache-status', cachedMap: { ...builtInCache, [VISION_MODEL_ID]: visionCached, ...customCache }, loadedModelId, webgpu: hasWebGPU() })
 }
 async function unloadText() {
   if (engine) await engine.exit().catch(() => {})
@@ -72,10 +72,11 @@ async function loadText(file?: File, allowDownload = true, modelId = DEFAULT_MOD
   loadedModelId = null
   let blob: File | null = await cachedGguf(modelId)
   if (file || (!blob && allowDownload)) {
-    post({ type: 'load-progress', modelId, phase: 'download', progress: 0 })
-    blob = await saveGguf(file, (loaded, total) => post({ type: 'load-progress', modelId, phase: 'download', progress: loaded / total * .9, loaded, total }), modelId)
+    const phase = file ? 'import' : 'download'
+    post({ type: 'load-progress', modelId, phase, progress: 0 })
+    blob = await saveGguf(file, (loaded, total) => post({ type: 'load-progress', modelId, phase, progress: loaded / total * .9, loaded, total }), modelId)
   }
-  if (!blob) throw new Error('Téléchargez LFM3 Q8 ou importez votre fichier GGUF avant de l’utiliser.')
+  if (!blob) throw new Error('Téléchargez le modèle choisi ou importez votre fichier GGUF avant de l’utiliser.')
   post({ type: 'load-progress', modelId, phase: 'warmup', progress: .95 })
   nativeError = ''
   const log = (...args: unknown[]) => {
@@ -91,7 +92,9 @@ async function loadText(file?: File, allowDownload = true, modelId = DEFAULT_MOD
     await engine.loadModel([blob], loadingSettings)
     const info = engine.getLoadedContextInfo()
     if (!info.n_ctx || !info.n_vocab || !info.n_layer) throw new Error(nativeError || 'Le moteur n’a pas chargé le modèle.')
-    if (!modelId.startsWith('custom-') && (info.metadata['general.architecture'] !== 'lfm3' || info.metadata['general.file_type'] !== '7')) throw new Error('Ce fichier n’est pas le modèle LFM3 Q8_0 attendu.')
+    const spec = getModelSpec(modelId)
+    const expectedArchitecture = spec.ggufArchitecture ?? (modelId.startsWith('qwen3-') ? 'qwen3' : 'lfm3')
+    if (!modelId.startsWith('custom-') && (info.metadata['general.architecture'] !== expectedArchitecture || info.metadata['general.file_type'] !== (spec.ggufFileType ?? '7'))) throw new Error('Le fichier téléchargé ne correspond pas au modèle sélectionné.')
     loadedModelId = modelId
     loadSignature = signature
     post({ type: 'load-progress', modelId, phase: 'warmup', progress: 1 })
@@ -140,7 +143,12 @@ async function generate(msg: Extract<WorkerRequest, { type: 'generate' }>) {
     const originalEvidence = evidence && [evidence.instructions, ...evidence.blocks].join('\n\n')
     let sourceCount = evidence?.blocks.length ?? 0
     // Native token counting happens before any visible output. No draft retries.
-    const options = { ...nativeSampling(settings), chat_template_kwargs: { enable_thinking: msg.enableThinking, preserve_thinking: false }, cache_prompt: true }
+    const sampling = nativeSampling(settings)
+    if (msg.modelId.startsWith('qwen3-') && msg.enableThinking && settings.temperature === .7 && settings.topP === .8) {
+      sampling.temperature = .6
+      sampling.top_p = .95
+    }
+    const options = { ...sampling, chat_template_kwargs: { enable_thinking: msg.enableThinking, preserve_thinking: false }, cache_prompt: true }
     while (true) {
       if (controller.signal.aborted) throw new DOMException('Arrêt demandé', 'AbortError')
       try {

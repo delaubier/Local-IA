@@ -19,6 +19,8 @@ test('model deletion is scoped, works offline and preserves conversations and un
     assert.deepEqual(removed, [])
     await clearModelFiles('custom-one')
     assert.deepEqual(removed.at(-1), ['root/localai-gguf-v1/custom-one', true])
+    await clearModelFiles('qwen3-text-1.7b-q8')
+    assert.deepEqual(removed.at(-1), ['root/localai-gguf-v1/qwen3-text-1.7b-q8', true])
     await clearModelFiles('lfm3-text-1.7b-q8')
     assert.equal(removed.at(-2)[0], 'root/localai-gguf-v1/complete.json')
     assert.ok(!removed.some(([path]) => path.includes('chatHistory')))

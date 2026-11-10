@@ -1,4 +1,5 @@
 {
-  "extensionDescription": { "message": "A local AI assistant for chat, voice dictation, and analyzing web pages, images and documents in your browser." },
-  "openLocalAI": { "message": "Open LocalAI" }
+  "extensionName": { "message": "Locaya — Local AI Assistant" },
+  "extensionDescription": { "message": "Chat with AI on your device, dictate messages, analyze pages and documents, and find sources on the web." },
+  "openLocaya": { "message": "Open Locaya" }
 }

@@ -1,4 +1,4 @@
-# Recherche web de LocalAI — choix du 8 novembre 2026
+# Recherche web de Locaya — choix du 8 novembre 2026
 
 Évolution de l'ensemble de l'assistant, choix des modèles et comparaison réelle de la réflexion : [architecture de l'assistant](architecture-assistant.md).
 
@@ -14,7 +14,7 @@ Les URL sont normalisées et dédoublonnées, puis les résultats sont classés 
 
 Les passages sont classés localement par BM25 sur un corpus commun, en parcourant jusqu'à 100 000 caractères par page. Les copies identiques sont dédoublonnées et les passages faibles écartés. Le budget initial est de 2 400 caractères pour une question ciblée et 5 200 pour une comparaison ou une synthèse, avec au plus quatre sources. Le moteur texte mesure ensuite la taille réelle de l'entrée et peut retirer les sources de fin de classement pour réserver la place de la réponse. Le contexte n'est injecté qu'une fois. Les citations correspondent aux sources transmises, sans établir à elles seules la justesse des affirmations.
 
-Le moteur de secours intervient après lecture si moins de deux domaines fournissent des pages pertinentes. Si une URL fournie ne livre pas de contenu exploitable, LocalAI peut lire le DOM déjà rendu lorsque cette URL est celle de l'onglet actif. Les recherches n'ouvrent pas d'onglets en arrière-plan.
+Le moteur de secours intervient après lecture si moins de deux domaines fournissent des pages pertinentes. Si une URL fournie ne livre pas de contenu exploitable, Locaya peut lire le DOM déjà rendu lorsque cette URL est celle de l'onglet actif. Les recherches n'ouvrent pas d'onglets en arrière-plan.
 
 La date de consultation ne vaut pas date de publication. Un échec de lecture laisse seulement l'extrait du moteur, explicitement étiqueté. Un lien direct inaccessible et sans contenu ne devient pas une source. Le cache en mémoire dure une minute, avec 24 pages maximum ; il peut donc introduire une minute de retard sur une page évolutive.
 
@@ -36,9 +36,9 @@ L'inférence et le classement restent locaux. Les requêtes et URL sont envoyée
 
 ## Choisir un fournisseur
 
-Dans **Paramètres → Recherche web**, le mode par défaut **LocalAI + Jina Reader** envoie jusqu'à deux URL HTTPS éligibles à Jina lorsque la lecture directe échoue ou renvoie trop peu de texte. Les URL locales, les adresses IP et les URL portant des paramètres sont exclues de ce secours. Le mode **LocalAI uniquement** utilise la recherche et la lecture depuis le navigateur.
+Dans **Paramètres → Recherche web**, le mode par défaut **Locaya + Jina Reader** envoie jusqu'à deux URL HTTPS éligibles à Jina lorsque la lecture directe échoue ou renvoie trop peu de texte. Les URL locales, les adresses IP et les URL portant des paramètres sont exclues de ce secours. Le mode **Locaya uniquement** utilise la recherche et la lecture depuis le navigateur.
 
-Les modes **Tavily**, **Brave Search API**, **Exa** et **SearXNG** envoient la requête au fournisseur choisi. Les pages qui en résultent passent par le traitement habituel de LocalAI. La clé est facultative pour l'essai Tavily, obligatoire pour Brave et Exa. SearXNG nécessite une instance avec le format JSON activé. Les clés saisies sont conservées dans le profil Chrome de l'extension.
+Les modes **Tavily**, **Brave Search API**, **Exa** et **SearXNG** envoient la requête au fournisseur choisi. Les pages qui en résultent passent par le traitement habituel de Locaya. La clé est facultative pour l'essai Tavily, obligatoire pour Brave et Exa. SearXNG nécessite une instance avec le format JSON activé. Les clés saisies sont conservées dans le profil Chrome de l'extension.
 
 Le mode **API JSON personnalisée** permet de raccorder un autre service ou un adaptateur. Indiquez une URL qui accepte `GET ?q=...` et retourne `{"results":[{"url":"https://example.org","title":"Titre","snippet":"Extrait"}]}`. Une clé facultative est envoyée dans l'en-tête `Authorization: Bearer`.
 
@@ -56,7 +56,7 @@ La lecture de page active ne privilégie plus une ancienne sélection de texte s
 
 Tests déterministes : citations, suppression des doublons, classement hors sujet, sélection d'une information en fin d'article, budget du contexte, liens inaccessibles, secours de moteur, langue et relances. Un aperçu Chrome utilise l'interface réelle et une inférence simulée pour vérifier les thèmes, les citations et la réflexion repliée. Le test réseau manuel a obtenu des pages lisibles et un refus HTTP 403 sur une page officielle : cette dernière a été traitée comme un extrait de moteur uniquement. Le temps mesuré sur cette seule recherche ne constitue pas un benchmark de performance générale.
 
-`node tests/compare-web-search.mjs --tavily --jina` compare la recherche actuelle à Tavily Search et à la recherche actuelle avec Jina Reader en secours. Tavily fournit les liens et LocalAI conserve son traitement des pages. Si `TAVILY_API_KEY` est défini dans le terminal, le banc utilise cette clé. Sinon, il utilise le mode sans clé de Tavily. Jina reçoit au plus deux URL publiques par question quand la lecture directe échoue ou renvoie trop peu de texte. Chaque variante a son propre cache en mémoire.
+`node tests/compare-web-search.mjs --tavily --jina` compare la recherche actuelle à Tavily Search et à la recherche actuelle avec Jina Reader en secours. Tavily fournit les liens et Locaya conserve son traitement des pages. Si `TAVILY_API_KEY` est défini dans le terminal, le banc utilise cette clé. Sinon, il utilise le mode sans clé de Tavily. Jina reçoit au plus deux URL publiques par question quand la lecture directe échoue ou renvoie trop peu de texte. Chaque variante a son propre cache en mémoire.
 
 Le banc mesure le temps de récupération et la présence de repères attendus sur six questions publiques. Il n'exécute pas LFM3. L'option `--baseline=chemin` accepte une autre version du module de recherche.
 

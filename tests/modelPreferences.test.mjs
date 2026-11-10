@@ -7,7 +7,7 @@ async function moduleAt(path) {
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
 }
 test('saved model preferences recover from invalid values and keep output and thinking inside context', async () => {
-  const { normalizeModelSettings, readModelSettings, readImportedModels } = await moduleAt('src/utils/modelSettings.ts')
+  const { normalizeModelSettings, settingsForModel, readModelSettings, readImportedModels } = await moduleAt('src/utils/modelSettings.ts')
   const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   const items = new Map()
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: key => items.get(key) } })
@@ -22,6 +22,10 @@ test('saved model preferences recover from invalid values and keep output and th
     assert.equal(invalid.microBatchSize, 32)
     assert.equal(normalizeModelSettings({ reasoningBudget: -1 }).reasoningBudget, -1)
     assert.equal(normalizeModelSettings().systemPrompt, '')
+    assert.equal(settingsForModel('qwen3-text-1.7b-q8').temperature, .7)
+    assert.equal(settingsForModel('qwen3-text-1.7b-q8').presencePenalty, 1.5)
+    assert.equal(settingsForModel('qwen3-text-1.7b-q8', { temperature: .4 }).temperature, .4)
+    assert.equal(settingsForModel('lfm3-text-1.7b-q8').temperature, .1)
     items.set('localaiModelSettings', 'invalid JSON')
     assert.deepEqual(readModelSettings(), {})
     items.set('localaiModelSettings', JSON.stringify({ model: { topK: 75 } }))
@@ -29,6 +33,13 @@ test('saved model preferences recover from invalid values and keep output and th
     items.set('localaiImportedModels', JSON.stringify([{ id: 'custom-one', name: 'Mine', bytes: 10 }, { id: '../unsafe', name: 'Bad', bytes: 10 }]))
     assert.deepEqual(readImportedModels().map(model => model.id), ['custom-one'])
   } finally { if (saved) Object.defineProperty(globalThis, 'localStorage', saved); else delete globalThis.localStorage }
+})
+
+test('download suggestion uses system memory and keeps the general-purpose default when memory is unknown', async () => {
+  const { recommendTextModel, LIGHT_MODEL_ID } = await moduleAt('src/utils/modelRecommendation.ts')
+  assert.equal(recommendTextModel(16), 'lfm3-text-1.7b-q8')
+  assert.equal(recommendTextModel(4), LIGHT_MODEL_ID)
+  assert.equal(recommendTextModel(), 'lfm3-text-1.7b-q8')
 })
 
 test('interface follows Chrome by default and respects explicit language choice', async () => {

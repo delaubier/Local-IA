@@ -7,6 +7,8 @@ import react from '@vitejs/plugin-react'
 // It is only available on the loopback development server, outside the extension.
 const modelPath = process.env.LOCALAI_GGUF
 export default defineConfig({
+  cacheDir: '.local/vite-model-evaluation',
+  resolve: { dedupe: ['onnxruntime-web'] },
   plugins: [react(), {
     name: 'local-gguf-test',
     configureServer(server) {
@@ -35,6 +37,6 @@ export default defineConfig({
     host: '127.0.0.1', port: 4174, strictPort: true, hmr: false,
     headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' },
   },
-  optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web'] },
+  optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web', 'parakeet.js', '@mediapipe/tasks-audio'] },
   worker: { format: 'es' },
 })

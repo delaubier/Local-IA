@@ -1,4 +1,5 @@
 {
-  "extensionDescription": { "message": "Votre assistant IA local : discutez, dictez et analysez vos pages, images et documents directement dans le navigateur." },
-  "openLocalAI": { "message": "Ouvrir LocalAI" }
+  "extensionName": { "message": "Locaya — Assistant IA local" },
+  "extensionDescription": { "message": "Discutez avec une IA locale, dictez vos messages, analysez des pages et documents et trouvez des sources sur le web." },
+  "openLocaya": { "message": "Ouvrir Locaya" }
 }

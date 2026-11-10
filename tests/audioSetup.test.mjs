@@ -20,11 +20,16 @@ test('Whisper is checked without downloading, requires explicit loading, and ret
           const state = globalThis.__audioSetup; state.loads++;
           state.modelIds.push(_id);
           if (state.fail) { state.fail = false; throw new Error('download failed') }
-          options.progress_callback({status:'progress',file:'encoder',loaded:100,total:100});
-          options.progress_callback({status:'progress',file:'decoder',loaded:20,total:100});
-          options.progress_callback({status:'done',file:'decoder'});
+          options.progress_callback?.({status:'progress',file:'encoder',loaded:100,total:100});
+          options.progress_callback?.({status:'progress',file:'decoder',loaded:20,total:100});
+          options.progress_callback?.({status:'done',file:'decoder'});
+          if (_id.startsWith('localai-imports/')) state.importOptions = [options.dtype, options.local_files_only, env.allowRemoteModels];
           state.cached = true;
-          const transcriber = async (audio, options) => {state.languages.push(options);return {text:options.language==='en'?'Good morning.':'Bonjour.'}};
+          const transcriber = async (audio, generation) => {
+            state.languages.push(generation)
+            if (options.device === 'webgpu' && state.gpuFails) throw new Error('GPU lost');
+            return {text:generation.language==='en'?'Good morning.':'Bonjour.'};
+          };
           transcriber.dispose = async () => {};
           transcriber.processor = async () => ({});
           transcriber.model = Object.assign(async () => ({logits:{dims:[1,1,4],data:new Float32Array([100,0,state.detected==='en'?10:1,state.detected==='fr'?10:1])}}),{generation_config:{decoder_start_token_id:1,lang_to_id:{'<|en|>':2,'<|fr|>':3}}});
@@ -57,9 +62,53 @@ test('Whisper is checked without downloading, requires explicit loading, and ret
     await send({ type: 'transcribe', source: 'mic', audio: new Float32Array(20) })
     assert.equal(outputs.at(-1).text, 'Bonjour.')
     assert.equal(state.loads, 2)
+    await send({ type: 'transcribe', source: 'mic', dictationLanguage: 'en', audio: new Float32Array(16000) })
+    assert.equal(outputs.at(-1).text, 'Good morning.')
+    assert.equal(outputs.at(-1).device, 'wasm')
+    assert.equal(outputs.at(-1).audioSeconds, 1)
+    assert.ok(outputs.at(-1).elapsedMs >= 0)
+    await send({ type: 'transcribe', source: 'tab', dictationLanguage: 'en', audio: new Float32Array(20) })
+    assert.equal(outputs.at(-1).text, 'Bonjour.', 'The dictation language does not affect tab audio')
     await send({ type: 'load', modelId: 'onnx-community/whisper-tiny' })
     await send({ type: 'transcribe', source: 'mic', modelId: 'onnx-community/whisper-tiny', audio: new Float32Array(20) })
     assert.equal(state.modelIds.at(-1), 'onnx-community/whisper-tiny')
     assert.equal(outputs.at(-1).text, 'Bonjour.')
-  } finally { delete globalThis.self; delete globalThis.__audioSetup }
+
+    const stored = new Map()
+    globalThis.caches = { open: async () => ({
+      put: async (url, response) => stored.set(url, response),
+      match: async url => stored.get(url),
+      delete: async url => stored.delete(url),
+    }) }
+    const compiled = await build({ entryPoints: ['src/utils/audioModelImport.ts'], bundle: true, format: 'esm', write: false })
+    const { importAudioModel } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
+    const file = (path, content = '{}') => Object.assign(new File([content], path.split('/').at(-1)), { webkitRelativePath: `My Whisper/${path}` })
+    const files = [
+      file('config.json', '{"model_type":"whisper"}'),
+      file('generation_config.json', '{"decoder_start_token_id":1,"lang_to_id":{"<|fr|>":3}}'),
+      file('tokenizer.json'), file('tokenizer_config.json'), file('preprocessor_config.json'),
+      file('onnx/encoder_model_quantized.onnx'), file('onnx/decoder_model_merged_quantized.onnx'),
+    ]
+    await assert.rejects(importAudioModel(files.slice(0, -1)), /dossier Whisper ONNX complet/)
+    assert.equal(stored.size, 0)
+    const imported = await importAudioModel(files)
+    assert.equal(imported.name, 'My Whisper')
+    await send({ type: 'check', modelId: imported.id })
+    assert.equal(outputs.at(-1).cached, true)
+    await send({ type: 'load', modelId: imported.id })
+    assert.equal(outputs.at(-1).type, 'asr-ready')
+    assert.deepEqual(state.importOptions, ['q8', true, false])
+    await send({ type: 'transcribe', source: 'mic', modelId: imported.id, audio: new Float32Array(20) })
+    assert.equal(outputs.at(-1).text, 'Bonjour.')
+
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: {
+      requestAdapter: async () => ({ info: { vendor: 'nvidia' }, features: new Set(['shader-f16']) }),
+    } })
+    await send({ type: 'load', backend: 'auto', cachedOnly: true })
+    assert.equal(outputs.at(-1).device, 'webgpu')
+    state.gpuFails = true
+    await send({ type: 'transcribe', source: 'mic', audio: new Float32Array(20) })
+    assert.equal(outputs.at(-1).device, 'wasm')
+    assert.equal(outputs.at(-1).text, 'Bonjour.')
+  } finally { delete globalThis.self; delete globalThis.__audioSetup; delete globalThis.caches; delete navigator.gpu }
 })

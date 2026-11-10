@@ -33,6 +33,7 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
   DEFAULT_MODEL_ID,
   VISION_MODEL_ID,
+  LFM_MODELS,
   modelForRequest,
   getModelSpec,
   type ChatTurn,
@@ -58,7 +59,6 @@ import {
   TabAudioCaptureController,
   speakMarkdownText,
   stopSpeaking,
-  detectTextLanguage,
 } from './utils/localAudio'
 import {
   performWebResearch,
@@ -78,19 +78,21 @@ import { originalRequest } from './utils/replyLanguage'
 import { formatCitations, getCitedSources } from './utils/citations'
 import { GenerationRun } from './utils/generationRun'
 import { isAssistantIdentityQuestion, continuesVisualContext, selectRequestHistory, countRequestedWord } from './utils/conversationContext'
-import type { AudioWorkerRequest, AudioWorkerResponse } from './audioWorker'
+import type { AudioMetrics, AudioWorkerRequest, AudioWorkerResponse } from './audioWorker'
 import { ModelSetupDialog } from './components/ModelSetupDialog'
 import { SettingsDialog, type SettingsAction } from './components/SettingsDialog'
 import { ConversationSidebar } from './components/ConversationSidebar'
 import { ResponseStats } from './components/ResponseStats'
 import { DictationVisualizer } from './components/DictationVisualizer'
-import { normalizeModelSettings, readModelSettings, readImportedModels, type ModelSettings, type ImportedModel } from './utils/modelSettings'
+import { normalizeModelSettings, settingsForModel, readModelSettings, readImportedModels, type ModelSettings, type ImportedModel } from './utils/modelSettings'
 import { tr, useInterfaceLanguage, interfaceLocale } from './utils/i18n'
-import { audioModel, DEFAULT_AUDIO_MODEL, readAudioModel } from './utils/audioModels'
+import { audioModelId as resolveAudioModelId, DEFAULT_AUDIO_MODEL, importedAudioDtype, readAudioModel, readDictationBackend, readDictationLanguage, readImportedAudioModels, type AudioDevice, type DictationBackend, type DictationLanguage } from './utils/audioModels'
+import { importAudioModel } from './utils/audioModelImport'
 import { clearModelFiles } from './utils/modelCache'
 import { createResearchProviders, DEFAULT_WEB_SETTINGS, readWebSettings, WEB_SETTINGS_KEY } from './utils/webProviders'
 import { exactPercentage } from './utils/exactCalculation'
 import { electionCalendarLookup, electionCountryFromReply, isPresidentialLookup, presidentialQuestionLanguage, previousElectionCountry, scopeElectionQuestion } from './utils/electionScope'
+import { recommendTextModel } from './utils/modelRecommendation'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -290,7 +292,7 @@ function MicPermissionPopupView() {
       <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 mb-4">
         <Mic size={26} />
       </div>
-      <h1 className="text-base font-bold mb-1.5">{tr('Activation du microphone LocalAI')}</h1>
+      <h1 className="text-base font-bold mb-1.5">{tr('Activation du microphone Locaya')}</h1>
       {status === 'prompting' && (
         <p className="text-xs text-slate-300 max-w-xs leading-relaxed mb-4">
           {tr('Cliquez sur « Autoriser » dans la notification de Chrome. Cette fenêtre se fermera automatiquement.')}
@@ -298,7 +300,7 @@ function MicPermissionPopupView() {
       )}
       {status === 'granted' && (
         <p className="text-xs text-emerald-400 font-semibold">
-          {tr('Microphone autorisé ! Retour automatique à LocalAI…')}
+          {tr('Microphone autorisé ! Retour automatique à Locaya…')}
         </p>
       )}
       {status === 'denied' && (
@@ -342,11 +344,12 @@ function ChatApp() {
   modelSettingsRef.current = modelSettings
   const [textModelId, setTextModelId] = useState(() => {
     const saved = localStorage.getItem('localaiTextModel')
-    return saved && readImportedModels().some(model => model.id === saved) ? saved : DEFAULT_MODEL_ID
+    return saved && (readImportedModels().some(model => model.id === saved) || LFM_MODELS.some(model => model.id === saved && model.ggufFile)) ? saved : DEFAULT_MODEL_ID
   })
   const textModelIdRef = useRef(textModelId)
   textModelIdRef.current = textModelId
-  const modelCatalog = [{ id: DEFAULT_MODEL_ID, name: 'LFM3-1.7B Q8_0', bytes: 1846238496 }, ...importedModels]
+  const hadSavedModelChoiceRef = useRef(Boolean(localStorage.getItem('localaiTextModel')))
+  const [recommendedModelId, setRecommendedModelId] = useState(DEFAULT_MODEL_ID)
   const [searchingWeb, setSearchingWeb] = useState<boolean>(false)
   const [webResearch, setWebResearch] = useState<{ query: string; steps: string[]; sentAt: number }>({ query: '', steps: [], sentAt: 0 })
   const pendingWebFallbackRef = useRef<{
@@ -366,7 +369,7 @@ function ChatApp() {
     return () => clearTimeout(timer)
   }, [copiedMessageIdx])
 
-  const [selectedModelId, setSelectedModelId] = useState<string>(DEFAULT_MODEL_ID)
+  const [selectedModelId, setSelectedModelId] = useState<string>(textModelId)
   const [showToolsMenu, setShowToolsMenu] = useState(false)
   const [thinkingEnabled, setThinkingEnabled] = useState(() => localStorage.getItem('localaiThinkingEnabled') === 'true')
   useEffect(() => { localStorage.setItem('localaiThinkingEnabled', String(thinkingEnabled)) }, [thinkingEnabled])
@@ -376,7 +379,10 @@ function ChatApp() {
   const workerRef = useRef<Worker | null>(null)
   const [workerEpoch, setWorkerEpoch] = useState(0)
   const [cachedMap, setCachedMap] = useState<Record<string, boolean>>({})
-  const [loadedModelId, setLoadedModelId] = useState<string | null>(null)
+  const catalogModels = LFM_MODELS.filter(model => model.ggufFile && (!model.legacy || cachedMap[model.id] || model.id === textModelId))
+  const modelCatalog = [...catalogModels.map(model => ({ id: model.id, name: model.name, bytes: model.ggufBytes ?? 0 })), ...importedModels]
+  const [, setLoadedModelId] = useState<string | null>(null)
+  const loadedModelIdRef = useRef<string | null>(null)
   const [loadingModelId, setLoadedModelIdLoading] = useState<string | null>(null)
   const [webgpuAvailable, setWebgpuAvailable] = useState(true)
   const [cacheChecked, setCacheChecked] = useState(false)
@@ -384,9 +390,24 @@ function ChatApp() {
   const startupReadyRef = useRef(false)
   const cachedModelsRef = useRef<Record<string, boolean>>({})
   const startupCheckRef = useRef(false)
+  useEffect(() => {
+    if (!cacheChecked) return
+    const state = { cancelled: false }
+    void (async () => {
+      const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<object | null> } }).gpu
+      const adapter = await gpu?.requestAdapter().catch(() => null)
+      const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory
+      const suggested = recommendTextModel(memory)
+      if (state.cancelled) return
+      if (!adapter) { setWebgpuAvailable(false); startupReadyRef.current = false; setStartupReady(false) }
+      setRecommendedModelId(suggested)
+
+    })()
+    return () => { state.cancelled = true }
+  }, [cacheChecked])
   const [requestedModelId, setRequestedModelId] = useState<string | null>(null)
   const pendingModelActionRef = useRef<(() => void) | null>(null)
-  const [loadPhase, setLoadPhase] = useState<'download' | 'warmup'>('download')
+  const [loadPhase, setLoadPhase] = useState<'download' | 'import' | 'warmup'>('download')
   const [progress, setProgress] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [statusBanner, setStatusBanner] = useState<string | null>(null)
@@ -394,6 +415,22 @@ function ChatApp() {
   // ─── État du Web Worker Audio (Whisper multilingue 100 % local) ───
   const audioWorkerRef = useRef<Worker | null>(null)
   const [audioModelId, setAudioModelId] = useState<string>(readAudioModel)
+  const [dictationBackend, setDictationBackend] = useState(readDictationBackend)
+  const dictationBackendRef = useRef(dictationBackend)
+  const [audioDevice, setAudioDevice] = useState<AudioDevice | null>(null)
+  const [audioModelInstalled, setAudioModelInstalled] = useState(false)
+  const [dictationLanguage, setDictationLanguage] = useState(readDictationLanguage)
+  const [micDeviceId, setMicDeviceId] = useState(() => localStorage.getItem('localaiMicrophone') ?? '')
+  const [audioMetrics, setAudioMetrics] = useState<AudioMetrics | null>(null)
+  const changeDictationLanguage = (value: DictationLanguage) => {
+    localStorage.setItem('localaiDictationLanguage', value)
+    setDictationLanguage(value)
+  }
+  const changeMicDevice = (id: string) => {
+    localStorage.setItem('localaiMicrophone', id)
+    setMicDeviceId(id)
+  }
+  const [importedAudioModels, setImportedAudioModels] = useState(readImportedAudioModels)
   const audioModelRef = useRef(audioModelId)
   const audioJobRef = useRef(0)
   const micRecorderRef = useRef<LocalMicRecorder>(new LocalMicRecorder())
@@ -462,7 +499,7 @@ function ChatApp() {
   useEffect(() => {
     localStorage.setItem('selectedLfmModel', selectedModelId)
   }, [selectedModelId])
-  useEffect(() => { localStorage.setItem('localaiTextModel', textModelId) }, [textModelId])
+  useEffect(() => { if (hadSavedModelChoiceRef.current) localStorage.setItem('localaiTextModel', textModelId) }, [textModelId])
   useEffect(() => { localStorage.setItem('localaiModelSettings', JSON.stringify(modelSettings)) }, [modelSettings])
   useEffect(() => { localStorage.setItem(WEB_SETTINGS_KEY, JSON.stringify(webSettings)) }, [webSettings])
   useEffect(() => { localStorage.setItem('localaiImportedModels', JSON.stringify(importedModels)) }, [importedModels])
@@ -530,16 +567,15 @@ function ChatApp() {
           setWebgpuAvailable(msg.webgpu)
           setCachedMap(msg.cachedMap)
           setLoadedModelId(msg.loadedModelId)
+          loadedModelIdRef.current = msg.loadedModelId
           cachedModelsRef.current = msg.cachedMap
           setCacheChecked(true)
           if (!startupCheckRef.current) {
             startupCheckRef.current = true
-            if (msg.loadedModelId === textModelIdRef.current) {
+            if (msg.cachedMap[textModelIdRef.current] && msg.webgpu) {
+              setRequestedModelId(null)
               startupReadyRef.current = true
               setStartupReady(true)
-            } else if (msg.cachedMap[textModelIdRef.current] && msg.webgpu) {
-              setLoadedModelIdLoading(textModelIdRef.current)
-              worker.postMessage({ type: 'load', modelId: textModelIdRef.current, settings: normalizeModelSettings(modelSettingsRef.current[textModelIdRef.current]) } satisfies WorkerRequest)
             }
           }
           break
@@ -551,6 +587,7 @@ function ChatApp() {
         case 'ready':
           setLoadedModelIdLoading(null)
           setLoadedModelId(msg.modelId)
+          loadedModelIdRef.current = msg.modelId
           setCachedMap((prev) => ({ ...prev, [msg.modelId]: true }))
           setErrorMsg(null)
           cachedModelsRef.current[msg.modelId] = true
@@ -638,11 +675,12 @@ function ChatApp() {
         case 'deleted':
           cachedModelsRef.current[msg.modelId] = false
           setCachedMap((prev) => ({ ...prev, [msg.modelId]: false }))
-          if (loadedModelId === msg.modelId) setLoadedModelId(null)
+          if (loadedModelIdRef.current === msg.modelId) { loadedModelIdRef.current = null; setLoadedModelId(null) }
           break
         case 'error':
           generationRunRef.current.finish()
-          console.error(`[LocalAI] ${msg.scope}:`, msg.message)
+          if (msg.scope === 'load') pendingModelActionRef.current = null
+          console.error(`[Locaya] ${msg.scope}:`, msg.message)
           setErrorMsg(msg.message)
           setLoadedModelIdLoading(null)
           pendingWebFallbackRef.current = null
@@ -677,10 +715,14 @@ function ChatApp() {
         const msg = event.data
         if (msg.type === 'asr-cache') {
           setWhisperCached(msg.cached)
+          setAudioModelInstalled(msg.installed ?? msg.cached)
+          setAudioDevice(msg.device ?? null)
         } else if (msg.type === 'asr-ready') {
           whisperReadyRef.current = true
           setWhisperReady(true)
           setWhisperCached(true)
+          setAudioModelInstalled(true)
+          setAudioDevice(msg.device ?? null)
           setWhisperLoading(false)
           setAsrBusyText(null)
           setWhisperError(null)
@@ -691,6 +733,7 @@ function ChatApp() {
           setWhisperProgress(msg.progress)
         } else if (msg.type === 'asr-result') {
           setAsrBusyText(null)
+          if (msg.source === 'mic') setAudioMetrics({ elapsedMs: msg.elapsedMs, audioSeconds: msg.audioSeconds, device: msg.device })
           if (!msg.text) {
             setErrorMsg(tr("Aucune parole intelligible n'a été détectée dans l'enregistrement."))
             return
@@ -707,9 +750,11 @@ function ChatApp() {
           }
         } else if (msg.type === 'asr-error') {
           pendingDictationRef.current = false
+          whisperReadyRef.current = false
+          setWhisperReady(false)
           setAsrBusyText(null)
           setWhisperLoading(false)
-          setWhisperError(msg.message)
+          setWhisperError(tr(msg.message))
           setShowWhisperSetup(true)
         }
       }
@@ -727,8 +772,12 @@ function ChatApp() {
     return audioWorkerRef.current
   }
 
+  const checkWhisper = () => getAudioWorker().postMessage({
+    type: 'check', modelId: audioModelRef.current, backend: dictationBackendRef.current,
+  } satisfies AudioWorkerRequest)
+
   useEffect(() => {
-    getAudioWorker().postMessage({ type: 'check', modelId: audioModelRef.current } satisfies AudioWorkerRequest)
+    checkWhisper()
     return () => { audioJobRef.current++; pendingDictationRef.current = false; micRecorderRef.current.cancel(); audioWorkerRef.current?.terminate(); audioWorkerRef.current = null }
   }, [])
 
@@ -738,8 +787,10 @@ function ChatApp() {
     setWhisperLoading(true)
     setShowWhisperSetup(true)
     setWhisperProgress(0)
-    setAsrBusyText(tr("Préparation de Whisper…"))
-    getAudioWorker().postMessage({ type: 'load', modelId: audioModelRef.current } satisfies AudioWorkerRequest)
+    setAsrBusyText(tr("Préparation de la dictée…"))
+    getAudioWorker().postMessage({
+      type: 'load', modelId: audioModelRef.current, backend: dictationBackendRef.current, cachedOnly: whisperCached === true,
+    } satisfies AudioWorkerRequest)
   }
 
   const requireWhisper = () => {
@@ -763,15 +814,38 @@ function ChatApp() {
     setShowWhisperSetup(false)
     setWhisperError(null)
     setWhisperCached(null)
-    if (recheck) getAudioWorker().postMessage({ type: 'check', modelId: audioModelRef.current } satisfies AudioWorkerRequest)
+    setAudioModelInstalled(false)
+    setAudioDevice(null)
+    setAudioMetrics(null)
+    if (recheck) checkWhisper()
+  }
+  const changeDictationBackend = (value: DictationBackend) => {
+    if (value === dictationBackendRef.current) return
+    localStorage.setItem('localaiDictationBackend', value)
+    dictationBackendRef.current = value
+    setDictationBackend(value)
+    cancelAudioTask()
   }
   const selectAudioModel = (id: string) => {
-    const next = audioModel(id).id
+    const next = resolveAudioModelId(id)
     if (next === audioModelRef.current) return
     audioModelRef.current = next
     setAudioModelId(next)
     localStorage.setItem('localaiAudioModel', next)
     cancelAudioTask()
+  }
+
+  const importOwnAudioModel = async (files: File[]) => {
+    const model = await importAudioModel(files)
+    const next = [...importedAudioModels, model]
+    try {
+      localStorage.setItem('localaiImportedAudioModels', JSON.stringify(next))
+    } catch (error) {
+      await clearModelFiles(model.id)
+      throw error
+    }
+    setImportedAudioModels(next)
+    selectAudioModel(model.id)
   }
 
   // All visual entry points share one explicit download gate.
@@ -871,22 +945,19 @@ function ChatApp() {
 
   const selectTextModel = (id: string) => {
     if (id === textModelIdRef.current) return
+    hadSavedModelChoiceRef.current = true
     textModelIdRef.current = id
     setTextModelId(id)
     setSelectedModelId(id)
     setErrorMsg(null)
-    startupReadyRef.current = false
-    setStartupReady(false)
-    setRequestedModelId(id)
+    const available = !!cachedModelsRef.current[id]
+    startupReadyRef.current = available
+    setStartupReady(available)
+    setRequestedModelId(available ? null : id)
     localStorage.setItem('localaiTextModel', id)
   }
   const closeSettings = () => {
     setShowSettings(false)
-    const id = textModelIdRef.current
-    if (!startupReadyRef.current && cachedModelsRef.current[id] && !loading && !pendingModelActionRef.current) {
-      setLoadedModelIdLoading(id)
-      postToWorker({ type: 'load', modelId: id, settings: normalizeModelSettings(modelSettingsRef.current[id]) })
-    }
   }
   const handleSettingsAction = async (action: SettingsAction) => {
     if (action === 'conversations') {
@@ -899,25 +970,46 @@ function ChatApp() {
     }
     if (action === 'reset') {
       modelSettingsRef.current = {}; setModelSettings({})
+      localStorage.removeItem('localaiDeveloperOptions')
+      localStorage.removeItem('localaiSpeechVoice')
+      stopSpeaking(); setSpeakingIdx(null)
       setWebSettings(DEFAULT_WEB_SETTINGS)
       localStorage.setItem('localaiModelSettings', '{}')
       selectTextModel(DEFAULT_MODEL_ID)
       selectAudioModel(DEFAULT_AUDIO_MODEL)
+      changeDictationLanguage('auto')
+      changeDictationBackend('auto')
+      changeMicDevice('')
+      setAudioMetrics(null)
       setThinkingEnabled(false); setDark(true); resetLanguage()
       setSelectedModelId(DEFAULT_MODEL_ID)
       localStorage.setItem('localaiThinkingEnabled', 'false'); localStorage.setItem('localaiTheme', 'dark')
       return
     }
     const audioOnly = action === 'audio-model'
+    if (audioOnly && !audioModelInstalled) return
+    if (action === 'model' && !cachedModelsRef.current[textModelIdRef.current]) return
     if (audioOnly || action === 'models') cancelAudioTask(false)
+    if (action === 'models') { stopSpeaking(); setSpeakingIdx(null) }
     if (!audioOnly) {
       workerRef.current?.terminate(); workerRef.current = null
+      loadedModelIdRef.current = null
       startupReadyRef.current = false; startupCheckRef.current = false
       setStartupReady(false); setLoadedModelId(null); setCacheChecked(false)
       setErrorMsg(null); pendingModelActionRef.current = null
     }
     try {
       await clearModelFiles(audioOnly ? audioModelRef.current : action === 'models' ? undefined : textModelIdRef.current)
+      if (action === 'models' || (audioOnly && importedAudioDtype(audioModelRef.current))) {
+        const remaining = action === 'models' ? [] : importedAudioModels.filter(model => model.id !== audioModelRef.current)
+        localStorage.setItem('localaiImportedAudioModels', JSON.stringify(remaining))
+        setImportedAudioModels(remaining)
+        if (importedAudioDtype(audioModelRef.current)) {
+          audioModelRef.current = DEFAULT_AUDIO_MODEL
+          setAudioModelId(DEFAULT_AUDIO_MODEL)
+          localStorage.setItem('localaiAudioModel', DEFAULT_AUDIO_MODEL)
+        }
+      }
       if (action === 'models' || textModelIdRef.current.startsWith('custom-') && !audioOnly) {
         const removed = action === 'models' ? importedModels.map(model => model.id) : [textModelIdRef.current]
         const remaining = importedModels.filter(model => !removed.includes(model.id))
@@ -929,7 +1021,7 @@ function ChatApp() {
         selectTextModel(DEFAULT_MODEL_ID)
       }
     } finally {
-      if (audioOnly || action === 'models') getAudioWorker().postMessage({ type: 'check', modelId: audioModelRef.current } satisfies AudioWorkerRequest)
+      if (audioOnly || action === 'models') checkWhisper()
       if (!audioOnly) {
         cachedModelsRef.current = {}; setCachedMap({})
         setRequestedModelId(textModelIdRef.current)
@@ -939,6 +1031,7 @@ function ChatApp() {
   }
 
   const importOwnModel = (file: File) => {
+    hadSavedModelChoiceRef.current = true
     const id = `custom-${crypto.randomUUID()}`
     const entry = { id, name: file.name.replace(/\.gguf$/i, ''), bytes: file.size }
     setImportedModels(previous => [...previous, entry])
@@ -946,8 +1039,9 @@ function ChatApp() {
     pendingModelActionRef.current = () => { textModelIdRef.current = id; setTextModelId(id); setSelectedModelId(id) }
     setErrorMsg(null)
     setLoadedModelIdLoading(id)
+    setLoadPhase('import')
     setProgress(0)
-    postToWorker({ type: 'load', modelId: id, file, settings: normalizeModelSettings(modelSettingsRef.current[id]) })
+    postToWorker({ type: 'load', modelId: id, file, settings: settingsForModel(id, modelSettingsRef.current[id]) })
   }
 
   const rollbackAndEdit = (index: number) => {
@@ -1034,13 +1128,15 @@ function ChatApp() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const downloadModel = (modelIdToLoad = selectedModelId, file?: File) => {
+  const downloadModel = (modelIdToLoad = selectedModelId) => {
     if (loading) return
+    hadSavedModelChoiceRef.current = true
+    if (modelIdToLoad !== VISION_MODEL_ID && !modelIdToLoad.startsWith('custom-')) localStorage.setItem('localaiTextModel', modelIdToLoad)
     setErrorMsg(null)
     setLoadedModelIdLoading(modelIdToLoad)
     setProgress(0)
-    setLoadPhase('download')
-    postToWorker({ type: 'load', modelId: modelIdToLoad, file, settings: normalizeModelSettings(modelSettingsRef.current[modelIdToLoad]) })
+    setLoadPhase(cachedModelsRef.current[modelIdToLoad] ? 'warmup' : 'download')
+    postToWorker({ type: 'load', modelId: modelIdToLoad, settings: settingsForModel(modelIdToLoad, modelSettingsRef.current[modelIdToLoad]) })
   }
 
   const toChatTurns = (history: ChatMessage[]): { turns: ChatTurn[]; lastRagBadge?: string } => {
@@ -1142,7 +1238,7 @@ function ChatApp() {
       autoToolLabel,
     }
 
-    const enableThinking = thinkingEnabled && !getModelSpec(targetModelId).isVision
+    const enableThinking = thinkingEnabled && !getModelSpec(targetModelId).isVision && getModelSpec(targetModelId).supportsThinking !== false
     setMessages([...baseHistory, userMsgForDisplay, { role: 'assistant', content: '', thinking: enableThinking }])
     setInput('')
     setAttachments([])
@@ -1159,7 +1255,7 @@ function ChatApp() {
       modelId: targetModelId,
       messages: turns,
       enableThinking,
-      settings: normalizeModelSettings(modelSettingsRef.current[targetModelId]),
+      settings: settingsForModel(targetModelId, modelSettingsRef.current[targetModelId]),
       webEvidence,
     })
   }
@@ -1229,6 +1325,15 @@ function ChatApp() {
     recordResearchStep(urls.length ? `${tr('Lecture de liens')} · ${urls.join(' · ')}` : `${tr('Requête web')} · ${compactWebQuery(effectiveSearchQuery)}`)
     setStatusBanner(null)
 
+    const answerWithoutSources = () => {
+      setSearchingWeb(false)
+      setStatusBanner(null)
+      const prompt = urls.length
+        ? `${question}\n\nThe linked pages could not be read. Answer any general question from your own knowledge in the user's language. Do not summarize or claim to have read those pages.`
+        : question
+      runPromptImmediately(prompt, userAtts, undefined, query, undefined, userAtts, baseHistory, undefined, [...researchSteps], sentAt)
+    }
+
     try {
       const outcome = await performWebResearch(effectiveSearchQuery, recordResearchStep, createResearchProviders(webSettings), extractActivePageContent, calendar)
       recordResearchStep(outcome.sources.length ? `${outcome.sources.length} · ${tr('Sources retenues')}` : tr('Aucune source exploitable'))
@@ -1239,9 +1344,7 @@ function ChatApp() {
       pendingWebFallbackRef.current = null
 
       if (outcome.sources.length === 0) {
-        saveSearchReply(detectTextLanguage(question) === 'fr'
-          ? (urls.length ? 'Je n’ai pas pu lire le contenu des liens fournis.' : 'La recherche web n’a retenu aucune source exploitable pour cette question.')
-          : (urls.length ? 'I could not read the content of the supplied links.' : 'The web search did not find a usable source for this question.'), [...researchSteps])
+        answerWithoutSources()
         return
       }
 
@@ -1268,12 +1371,9 @@ function ChatApp() {
         sentAt,
         outcome.evidence,
       )
-    } catch (err: unknown) {
-      setSearchingWeb(false)
-      setStatusBanner(null)
-      setWebResearch({ query: '', steps: [], sentAt: 0 })
+    } catch {
       recordResearchStep(tr('Échec de la recherche web'))
-      saveSearchReply(err instanceof Error ? err.message : tr('Échec de la recherche web'), [...researchSteps])
+      answerWithoutSources()
     }
   }
 
@@ -1466,6 +1566,7 @@ function ChatApp() {
           audio: pcm16k,
           modelId: audioModelRef.current,
           source: 'mic',
+          dictationLanguage,
         }
         aw.postMessage(req, [pcm16k.buffer])
       } catch (err: any) {
@@ -1485,7 +1586,7 @@ function ChatApp() {
     try {
       stopSpeaking()
       setSpeakingIdx(null)
-      await micRecorderRef.current.start()
+      await micRecorderRef.current.start(micDeviceId)
       setShowWhisperSetup(false)
       setIsRecordingMic(true)
     } catch (err: any) {
@@ -1599,7 +1700,17 @@ function ChatApp() {
   const submitUserQuery = async (rawText: string) => {
     if (!startupReadyRef.current) return
     if ((!rawText.trim() && attachments.length === 0) || generating || loading || searchingWeb || isRecordingMic || !!asrBusyText) return
-    if (attachments.some((a) => a.type === 'image') && !requireModel(VISION_MODEL_ID, () => { void submitUserQuery(rawText) })) return
+    const hasImage = attachments.some((a) => a.type === 'image')
+    if (hasImage && !requireModel(VISION_MODEL_ID, () => { void submitUserQuery(rawText) })) return
+    if (!hasImage && loadedModelIdRef.current !== textModelIdRef.current) {
+      const id = textModelIdRef.current
+      pendingModelActionRef.current = () => { void submitUserQuery(rawText) }
+      setLoadedModelIdLoading(id)
+      setLoadPhase('warmup')
+      setProgress(0)
+      postToWorker({ type: 'load', modelId: id, settings: settingsForModel(id, modelSettingsRef.current[id]) })
+      return
+    }
     const trimmed = rawText.trim()
 
     const last = messages.at(-1)
@@ -1708,15 +1819,20 @@ function ChatApp() {
       <SettingsDialog open={showSettings} onClose={closeSettings} language={languagePreference} onLanguage={setLanguage}
         web={webSettings} onWeb={setWebSettings}
         models={modelCatalog} selectedModelId={textModelId} settings={modelSettings} onSave={saveModelSettings} onImport={importOwnModel}
+        textModelInstalled={!!cachedMap[textModelId]} audioModelInstalled={audioModelInstalled}
+        importedAudioModels={importedAudioModels} onImportAudio={importOwnAudioModel}
+        dictationLanguage={dictationLanguage} onDictationLanguage={changeDictationLanguage}
+        dictationBackend={dictationBackend} onDictationBackend={changeDictationBackend} audioDevice={audioDevice}
+        micDeviceId={micDeviceId} onMicDevice={changeMicDevice} audioMetrics={audioMetrics}
         onSelect={selectTextModel} audioModelId={audioModelId} onAudioModel={selectAudioModel} onAction={handleSettingsAction}
         busy={loading || generating || searchingWeb || isRecordingMic || isCapturingTabAudio || whisperLoading || !!asrBusyText} />
 
       <header inert={!startupReady || loading || !!requestedModelId} className="app-header flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setShowSidebar(true)} title={tr("Vos conversations")} aria-label={tr("Vos conversations")} className="header-icon"><Menu size={19} strokeWidth={1.6} /></button>
-          <div className="localai-brand" aria-label="LocalAI">
+          <div className="localai-brand" aria-label="Locaya">
             <svg viewBox="0 0 28 28" width="25" height="25" fill="none" aria-hidden="true"><path d="M6 7v10a5 5 0 0 0 5 5h10M12 5v9a3 3 0 0 0 3 3h8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><circle cx="22" cy="7" r="2.5" fill="currentColor" /></svg>
-            <span>local<span className="brand-ai">ai</span></span>
+            <span>Locaya</span>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -1726,11 +1842,12 @@ function ChatApp() {
       </header>
 
       <ModelSetupDialog open={!showSettings && (!startupReady || !!requestedModelId || loading)} checking={!cacheChecked}
-        busy={loading} progress={progress} preparing={loadPhase === 'warmup'} name={setupSpec.name} size={setupSpec.sizeLabel}
+        busy={loading} progress={progress} phase={loadPhase} name={setupSpec.name} size={setupSpec.sizeLabel}
         cached={!!cachedMap[setupSpec.id]} error={errorMsg} unavailable={!webgpuAvailable} optional={startupReady}
         onDownload={() => downloadModel(setupSpec.id)}
-        onImport={setupSpec.isVision ? undefined : (file) => downloadModel(setupSpec.id, file)}
-        onSettings={() => setShowSettings(true)} isVision={setupSpec.isVision} custom={setupSpec.id.startsWith('custom-')}
+        onImport={setupSpec.isVision ? undefined : importOwnModel}
+        onSettings={() => setShowSettings(true)} isVision={setupSpec.isVision}
+        choices={catalogModels} selectedId={setupSpec.id} recommendedId={recommendedModelId} onChoose={selectTextModel}
         onCancel={() => { pendingModelActionRef.current = null; setRequestedModelId(null); setErrorMsg(null) }} />
 
       {/* Bandeau d'écoute audio en direct */}
@@ -2167,12 +2284,12 @@ function ChatApp() {
             <div className="composer-model-status">
               <div className="composer-model-row">
                 {asrBusyText ? <Loader2 size={15} className="animate-spin" /> : <Mic size={15} />}
-                <span role={whisperError ? 'alert' : 'status'}>{whisperError || asrBusyText || (isRecordingMic ? tr("Dictée en cours…") : whisperCached ? tr("Whisper est disponible sur cet appareil.") : tr("Whisper pour la dictée vocale"))}</span>
-                <button type="button" aria-label={whisperLoading || asrBusyText ? tr('Annuler le traitement audio') : tr('Fermer les informations de Whisper')} onClick={() => { if (whisperLoading || asrBusyText) cancelAudioTask(); else { pendingDictationRef.current = false; setShowWhisperSetup(false); setWhisperError(null) } }}><X size={14} /></button>
+                <span role={whisperError ? 'alert' : 'status'}>{whisperError || asrBusyText || (isRecordingMic ? tr("Dictée en cours…") : whisperCached ? tr("Le modèle de dictée est disponible sur cet appareil.") : tr("Modèle pour la dictée vocale"))}</span>
+                <button type="button" aria-label={whisperLoading || asrBusyText ? tr('Annuler le traitement audio') : tr('Fermer les informations de dictée')} onClick={() => { if (whisperLoading || asrBusyText) cancelAudioTask(); else { pendingDictationRef.current = false; setShowWhisperSetup(false); setWhisperError(null) } }}><X size={14} /></button>
               </div>
-              {whisperLoading && <div className="composer-model-progress" role="progressbar" aria-label={tr('Chargement de Whisper')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(whisperProgress * 100)}><span style={{ width: `${Math.round(whisperProgress * 100)}%` }} /></div>}
+              {whisperLoading && <div className="composer-model-progress" role="progressbar" aria-label={tr('Chargement du modèle de dictée')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(whisperProgress * 100)}><span style={{ width: `${Math.round(whisperProgress * 100)}%` }} /></div>}
               {whisperLoading && <span className="composer-model-percent">{Math.round(whisperProgress * 100)} %</span>}
-              {!whisperReady && !whisperLoading && !asrBusyText && <button type="button" className="composer-download" onClick={prepareWhisper} disabled={whisperCached === null}><Download size={14} />{whisperCached === null ? tr("Vérification…") : whisperCached ? tr("Charger Whisper") : tr("Télécharger Whisper")}</button>}
+              {!whisperReady && !whisperLoading && !asrBusyText && <button type="button" className="composer-download" onClick={prepareWhisper} disabled={whisperCached === null}><Download size={14} />{whisperCached === null ? tr("Vérification…") : whisperCached ? tr("Charger le modèle") : tr("Télécharger le modèle de dictée")}</button>}
             </div>
           )}
           {hasImageAttachment && !cachedMap[VISION_MODEL_ID] && <div className="composer-model-status"><button type="button" className="composer-download" onClick={() => requireModel(VISION_MODEL_ID)}><Download size={14} />{tr("Télécharger le modèle d’images")}</button></div>}
@@ -2233,7 +2350,7 @@ function ChatApp() {
             }}
             disabled={loading || generating || searchingWeb || !webgpuAvailable}
             placeholder={
-              loading ? tr("Préparation de l'assistant…") : tr("Demander à LocalAI")
+              loading ? tr("Préparation de l'assistant…") : tr("Demander à Locaya")
             }
             className="w-full bg-transparent px-1.5 py-1.5 text-[14px] focus:outline-none disabled:opacity-50 placeholder:text-slate-400"
           />
@@ -2269,14 +2386,14 @@ function ChatApp() {
               </AnimatePresence>
             </div>
 
-            <div className="thinking-switch" role="group" aria-label={tr("Mode de réponse")}>
+            {getModelSpec(textModelId).supportsThinking !== false && <div className="thinking-switch" role="group" aria-label={tr("Mode de réponse")}>
               <button type="button" aria-pressed={!thinkingEnabled} disabled={loading || generating || searchingWeb}
                 onClick={() => setThinkingEnabled(false)} title={tr("Réponse directe")}><Zap size={14} /><span>{tr("Rapide")}</span></button>
               <button type="button" aria-pressed={thinkingEnabled} disabled={loading || generating || searchingWeb}
-                onClick={() => setThinkingEnabled(true)} title={tr("Réflexion native de LFM3 pour les demandes texte")}><Brain size={14} /><span>{tr("Thinking")}</span></button>
-            </div>
+                onClick={() => setThinkingEnabled(true)} title={tr("Réflexion native du modèle pour les demandes texte")}><Brain size={14} /><span>{tr("Thinking")}</span></button>
+            </div>}
             <div className="composer-actions flex items-center gap-1.5">
-              <button type="button" onClick={handleToggleMicDictation} disabled={!isRecordingMic && (!startupReady || loading || generating || searchingWeb || !!asrBusyText)} title={isRecordingMic ? tr("Arrêter la dictée") : whisperReady || whisperCached ? tr("Dicter à la voix") : tr("Télécharger Whisper pour la dictée")} aria-label={isRecordingMic ? tr("Arrêter la dictée vocale") : whisperReady || whisperCached ? tr("Dicter à la voix") : tr("Télécharger Whisper pour la dictée")} className={`relative grid h-9 w-9 place-items-center rounded-full transition-all disabled:opacity-40 ${isRecordingMic ? 'bg-rose-500 text-white animate-pulse' : dark ? 'text-slate-200 hover:bg-white/10' : 'text-slate-600 hover:bg-slate-100'}`}><Mic size={17} />{!whisperCached && !whisperReady && <Download size={10} className="mic-download-badge" />}</button>
+              <button type="button" onClick={handleToggleMicDictation} disabled={!isRecordingMic && (!startupReady || loading || generating || searchingWeb || !!asrBusyText)} title={isRecordingMic ? tr("Arrêter la dictée") : whisperReady || whisperCached ? tr("Dicter à la voix") : tr("Télécharger le modèle de dictée")} aria-label={isRecordingMic ? tr("Arrêter la dictée vocale") : whisperReady || whisperCached ? tr("Dicter à la voix") : tr("Télécharger le modèle de dictée")} className={`relative grid h-9 w-9 place-items-center rounded-full transition-all disabled:opacity-40 ${isRecordingMic ? 'bg-rose-500 text-white' : dark ? 'text-slate-200 hover:bg-white/10' : 'text-slate-600 hover:bg-slate-100'}`}><Mic size={17} />{!whisperCached && !whisperReady && <Download size={10} className="mic-download-badge" />}</button>
               {generating ? (
                 <button type="button" onClick={stopGeneration} title={tr("Arrêter la réponse")} aria-label={tr("Arrêter la réponse")} className="grid h-9 w-9 place-items-center rounded-full bg-rose-500 text-white"><Square size={13} fill="currentColor" /></button>
               ) : searchingWeb ? (

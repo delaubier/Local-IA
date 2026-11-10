@@ -22,7 +22,7 @@ class PreviewWorker {
   constructor(url: URL) { this.audio = String(url).includes('audioWorker') }
   postMessage(message: { type: string; requestId?: number; modelId?: string }) {
     const emit = (data: unknown, delay = 0) => this.timers.push(setTimeout(() => this.onmessage?.({ data }), delay))
-    if (message.type === 'check') emit(this.audio ? { type: 'asr-cache', cached: scenario.has('cached') } : { type: 'cache-status', cachedMap: { [modelId]: !scenario.has('setup') }, loadedModelId: scenario.has('setup') || scenario.has('cached') ? null : modelId, webgpu: true })
+    if (message.type === 'check') emit(this.audio ? { type: 'asr-cache', cached: scenario.has('cached') } : { type: 'cache-status', cachedMap: scenario.has('cached') ? { [modelId]: true, 'qwen3-text-1.7b-q8': true, 'qwen3-text-0.6b-q8': true } : { [modelId]: !scenario.has('setup') }, loadedModelId: scenario.has('setup') || scenario.has('cached') ? null : modelId, webgpu: true })
     if (message.type === 'load') {
       const stepMs = scenario.has('slow') ? 4000 : 1000
       if (this.failOnce) {

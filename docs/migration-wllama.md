@@ -1,4 +1,4 @@
-# Migration de LocalAI vers wllama / LFM3 Q8
+# Migration de Locaya vers wllama / LFM3 Q8
 
 Le moteur texte de l’extension est remplacé par **wllama 3.12.0**, embarquant **llama.cpp b12162-d38bea3**, et `LFM3-1.7B-Q8_0.gguf`. Il s’agit du même fichier de 1 846 238 496 octets que celui présent dans le dossier LM Studio de l’utilisateur et testé dans le banc indépendant.
 

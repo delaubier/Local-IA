@@ -228,10 +228,10 @@ export function shouldTriggerWebSearch(userQuery: string, hasAttachments = false
     return true
   }
 
-  // 5. Questions factuelles, encyclopédiques, géographiques, historiques ou sur des personnes/entreprises/produits (Multilingue)
+  // 5. Questions dont la réponse dépend du lieu, d'une recommandation ou d'une fonction susceptible de changer.
   if (presidentialQuestionLanguage(q)) return true
   if (
-    /\b(qui est|qui sont|qui a |qu['’]est[- ]ce que|c['’]est quoi|o[uù] se trouve|o[uù] est|quand a |quand est|combien co[uû]te|combien d['’e]|quel est|quelle est|quels sont|quelles sont|capitale|pr[eé]sident|ministre|gouvernement|maire|pdg|fondateur|dirigeant|entreprise|soci[eé]t[eé]|population|superficie|histoire de|biographie|film|s[eé]rie|album|chanson|jeu|loi|article de loi|who is|who are|what is|where is|when did|when was|how much|how many|president|ceo|founder|company|capital of|qui[eé]n es|qu[eé] es|d[oó]nde est[aá]|wer ist|was ist|wo ist)\b/i.test(
+    /\b(pr[eé]sident|ministre|gouvernement|maire|pdg|dirigeant|population|president|ceo)\b|\b(?:good|best|nearest|cheapest|bon|meilleur|moins cher)\s+(?:restaurants?|h[oô]tels?)\b/i.test(
       lower,
     )
   ) {
@@ -247,14 +247,7 @@ export function shouldTriggerWebSearch(userQuery: string, hasAttachments = false
     return false
   }
 
-  // 7. Présence d'un nom propre (mot avec majuscule après le premier mot) ou d'un point d'interrogation sur une question de > 20 caractères
-  const words = q.split(/\s+/)
-  const hasProperNoun = words.slice(1).some((w) => /^[A-ZÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ][a-zàâäéèêëîïôöùûüç0-9_-]{2,}/.test(w))
-  if (hasProperNoun) return true
-
-  // Punctuation alone does not justify research. For other requests the model can
-  // request a tool before answering, without replacing an already visible answer.
-
+  // For other requests the model can request a tool before answering.
   return false
 }
 
@@ -381,7 +374,7 @@ export function buildContextualWebQuery(
   if (newYear) {
     const previous = historyMessages.findLast(message => message.role === 'user' &&
       !isAssistantIdentityQuestion(message.text) && searchTerms(message.text).some(term => !/^\d+$/.test(term) && !['in', 'then', 'alors'].includes(term)))
-    if (previous && shouldTriggerWebSearch(previous.text) && !extractUrlsFromText(previous.text).length &&
+    if (previous && (shouldTriggerWebSearch(previous.text) || /\b\d{4}\b/.test(previous.text)) && !extractUrlsFromText(previous.text).length &&
       (previous.text.match(/\b\d{4}\b/g)?.length ?? 0) <= 1) {
       return `${newYear[1]} ${previous.text.replace(/\b\d{4}\b/g, '').replace(/\s+/g, ' ').trim()}`
     }
@@ -771,7 +764,7 @@ export async function fetchAndCleanWebPage(rawUrl: string): Promise<ReturnType<t
 /**
  * Exécute une recherche Web complète (ou lit les URL présentes dans le prompt),
  * récupère le contenu des meilleures pages en parallèle et prépare les pièces jointes
- * pour le moteur RAG BM25 de LocalAI.
+ * pour le moteur RAG BM25 de Locaya.
  */
 export interface ResearchProviders {
   search: (query: string) => Promise<Omit<WebSearchSource, 'index'>[]>
