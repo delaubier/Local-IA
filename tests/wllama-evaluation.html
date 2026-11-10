@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LocalAI · Essai GGUF Q8</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#171a18;color:#edf1ee;font:15px/1.65 system-ui,sans-serif}main{max-width:880px;margin:auto;padding:40px 24px}h1{font-size:28px;letter-spacing:-.8px;margin:0}h2{font-size:16px;margin:24px 0 8px}.muted,small{color:#a2aea6}button,select,textarea,input{font:inherit;color:inherit;background:#252b27;border:1px solid #455047;border-radius:12px;padding:10px 14px}button{cursor:pointer}button.primary{background:#bed9c8;color:#17241b;border-color:transparent}button:disabled{opacity:.4;cursor:default}.row{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}label{display:grid;gap:4px}textarea{width:100%;min-height:90px;resize:vertical}#status{margin:20px 0;padding:14px 18px;background:#222824;border-radius:12px}#results article{border-bottom:1px solid #374039;padding:20px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}#logs{font:12px/1.6 monospace;max-height:240px;overflow:auto;color:#a2aea6}summary{cursor:pointer}#error{color:#ffc5b7;white-space:pre-wrap}#info{font-size:13px;color:#a2aea6}input[type=file]{max-width:100%}
+</style></head><body><main>
+<small>LOCALAI · BANC D’ESSAI INDÉPENDANT</small><h1>LFM3, avec vos poids Q8.</h1>
+<p class="muted">Le fichier reste sur cet ordinateur. Aucun accès à Internet pour les réponses, aucun appel à LM Studio.</p>
+<div id="info"></div>
+<div class="row"><label>Moteur<select id="backend"><option value="gpu">WebGPU</option><option value="cpu">CPU · WebAssembly</option></select></label><label>Contexte<select id="context"><option>8192</option><option>4096</option><option>2048</option></select></label></div>
+<label>Votre fichier GGUF<input id="file" type="file" accept=".gguf"></label>
+<div class="row"><button id="load" class="primary">Charger le fichier local configuré</button><button id="unload" disabled>Libérer le modèle</button></div>
+<div id="status" role="status">En attente du modèle.</div><p id="error" role="alert"></p>
+<p class="muted">Thinking au choix ci-dessous · format natif du GGUF · aucun message système ajouté · température 0,1 · top-k 50 · répétition 1,1 · graine 42. Ce banc indépendant utilise les limites natives ; le chat de l’extension réserve un budget à la réponse finale.</p>
+<label>Votre question<textarea id="question" placeholder="Posez la même question que dans LM Studio…"></textarea></label>
+<label><input type="checkbox" id="thinking">Thinking natif (enable_thinking)</label>
+<div class="row"><button id="send" class="primary" disabled>Envoyer</button><button id="clear" disabled>Nouvelle conversation</button><button id="suite" disabled>Lancer les 4 cas de contrôle</button><button id="stop" disabled>Arrêter</button><button id="export">Exporter le rapport JSON</button></div>
+<section id="results" aria-label="Résultats"></section>
+<details><summary>Diagnostic du moteur</summary><pre id="logs"></pre></details>
+<script type="module" src="./wllama-evaluation.ts"></script></main></body></html>
